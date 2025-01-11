@@ -74,7 +74,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
         print_substep("Launching Headless Browser...")
 
         browser = p.chromium.launch(
-            headless=True
+            headless=False
         )  # headless=False will show the browser for debugging purposes
         # Device scale factor (or dsf for short) allows us to increase the resolution of the screenshots
         # When the dsf is 1, the width of the screenshot is 600 pixels
@@ -163,7 +163,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
             )
 
             page.evaluate(
-                "tl_content => document.querySelector('[data-adclicklocation=\"title\"] > div > div > h1').textContent = tl_content",
+                "tl_content => document.querySelector('shreddit-post > h1').textContent = tl_content",
                 texts_in_tl,
             )
         else:
@@ -177,12 +177,12 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 # zoom the body of the page
                 page.evaluate("document.body.style.zoom=" + str(zoom))
                 # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                location = page.locator('[data-test-id="post-content"]').bounding_box()
+                location = page.locator('shreddit-post').bounding_box()
                 for i in location:
                     location[i] = float("{:.2f}".format(location[i] * zoom))
                 page.screenshot(clip=location, path=postcontentpath)
             else:
-                page.locator('[data-test-id="post-content"]').screenshot(path=postcontentpath)
+                page.locator('shreddit-post').screenshot(path=postcontentpath)
         except Exception as e:
             print_substep("Something went wrong!", style="red")
             resp = input(
@@ -220,7 +220,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 if page.locator('[data-testid="content-gate"]').is_visible():
                     page.locator('[data-testid="content-gate"] button').click()
 
-                page.goto(f"https://new.reddit.com/{comment['comment_url']}")
+                page.goto(f"https://new.reddit.com{comment['comment_url']}")
 
                 # translate code
 
@@ -231,7 +231,7 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                         to_language=settings.config["reddit"]["thread"]["post_lang"],
                     )
                     page.evaluate(
-                        '([tl_content, tl_id]) => document.querySelector(`#t1_${tl_id} > div:nth-child(2) > div > div[data-testid="comment"] > div`).textContent = tl_content',
+                        '([tl_content, tl_id]) => document.querySelector(`#t1_${tl_id}-comment-rtjson-content > div:nth-child(1) > p`).textContent = tl_content',
                         [comment_tl, comment["comment_id"]],
                     )
                 try:
@@ -240,20 +240,49 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                         zoom = settings.config["settings"]["zoom"]
                         # zoom the body of the page
                         page.evaluate("document.body.style.zoom=" + str(zoom))
-                        # scroll comment into view
-                        page.locator(f"#t1_{comment['comment_id']}").scroll_into_view_if_needed()
-                        # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                        location = page.locator(f"#t1_{comment['comment_id']}").bounding_box()
-                        for i in location:
-                            location[i] = float("{:.2f}".format(location[i] * zoom))
-                        page.screenshot(
-                            clip=location,
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
-                        )
+                        # Scroll the parent of the comment into view
+                        parent_locator = page.locator(f"#t1_{comment['comment_id']}-comment-rtjson-content").locator('xpath=..')
+                        parent_locator.scroll_into_view_if_needed()
+
+                        # Get the bounding box of the parent element
+                        location = parent_locator.bounding_box()
+
+                        # Ensure bounding box is valid
+                        if location:
+                            # Adjust for zoom (since zooming doesn't change the div's actual properties)
+                            location['x'] = float("{:.2f}".format(location['x'] * zoom))
+                            location['y'] = float("{:.2f}".format(location['y'] * zoom))
+                            location['width'] = float("{:.2f}".format(location['width'] * zoom))
+                            location['height'] = float("{:.2f}".format(location['height'] * zoom))
+
+                            # Adjust the height to be exactly 200px
+                            location['height'] = 200
+
+                            # Take a screenshot of the parent element with the adjusted height
+                            page.screenshot(
+                                clip=location,
+                                path=f"assets/temp/{reddit_id}/png/comment_{idx}_parent.png",
+                            )
+                        else:
+                            print("Could not get the bounding box of the parent element.")
+                  
                     else:
-                        page.locator(f"#t1_{comment['comment_id']}").screenshot(
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png"
-                        )
+                        # getting the bounding_box
+                        parent_locator = page.locator(f"#t1_{comment['comment_id']}-comment-rtjson-content").locator('xpath=..')
+                        location = parent_locator.bounding_box()
+
+                        # bounding_box is valid ?
+                        if location:
+                            # ajust 200px
+                            location['height'] = 200
+
+                            #  make screenshot
+                            page.screenshot(
+                                path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
+                                clip=location  # resize to 200px
+                            )
+                        else:
+                            print("The element's bounding box could not be obtained.")
                 except TimeoutError:
                     del reddit_object["comments"]
                     screenshot_num += 1
